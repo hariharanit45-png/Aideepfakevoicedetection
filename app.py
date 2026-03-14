@@ -1,77 +1,70 @@
 import streamlit as st
-from pathlib import Path
+from utils import load_model, predict_audio
 import tempfile
-import librosa
-import librosa.display
-import numpy as np
-import soundfile as sf
-from yaml import safe_load
-import torch
+import os
 
-from src.model.cnn import DeepCNN
+st.set_page_config(page_title="AI Fake Voice Detection", page_icon="🎤", layout="wide")
 
+# Sidebar
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to", ["Home", "About", "Accuracy"])
 
-def load_config(path: Path) -> dict:
-    with open(path, 'r') as f:
-        return safe_load(f)
+if page == "Home":
+    st.title("🎤 AI Fake Voice Detection")
+    st.write("Upload an audio file to check if it's real or fake.")
 
+    uploaded_file = st.file_uploader("Choose an audio file", type=['wav', 'mp3', 'flac'])
 
-@st.cache_resource
-def load_model(model_path: Path, device: str = 'cpu'):
-    dev = torch.device('cuda' if torch.cuda.is_available() and device == 'cuda' else 'cpu')
-    model = DeepCNN().to(dev)
-    model.load_state_dict(torch.load(model_path, map_location=dev))
-    model.eval()
-    return model, dev
+    if uploaded_file is not None:
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_path = tmp_file.name
 
+        # Display audio player
+        st.audio(uploaded_file, format='audio/wav')
 
-def preprocess_audio(y, sr, duration=3.0):
-    target = int(sr * duration)
-    if len(y) < target:
-        y = np.pad(y, (0, target - len(y)))
-    else:
-        y = y[:target]
-    mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
-    mel_db = librosa.power_to_db(mel, ref=np.max)
-    return mel_db
+        # Load model
+        model = load_model('model.pkl')
 
+        # Predict
+        result = predict_audio(model, tmp_path)
 
-def main():
-    st.title('Tamil Deepfake Audio Detection')
-    app_dir = Path(__file__).parent
-    cfg = load_config(app_dir / 'config/config.yaml')
-    model_path = app_dir / 'models/best_model.pth'
-    if model_path.exists():
-        model, device = load_model(model_path, device='cpu')
-    else:
-        model = None
-        device = 'cpu'
+        st.success(f"The audio is predicted to be: **{result}**")
 
-    uploaded = st.file_uploader('Upload audio', type=['wav', 'mp3', 'flac'])
-    if uploaded is not None:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded.name).suffix) as tmp:
-            tmp.write(uploaded.read())
-            tmp_path = tmp.name
-        y, sr = librosa.load(tmp_path, sr=cfg.get('sr', 16000))
-        mel = preprocess_audio(y, sr, duration=cfg.get('duration', 3.0))
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(6, 3))
-        librosa.display.specshow(mel, sr=sr, x_axis='time', y_axis='mel', fmax=8000, ax=ax)
-        ax.set_title('Mel Spectrogram')
-        st.pyplot(fig)
-        if model is None:
-            st.warning('Model not found. Run pipeline to train a model.')
-        else:
-            arr = np.expand_dims(mel, 0)
-            arr = np.expand_dims(arr, 0)
-            tensor = torch.tensor(arr, dtype=torch.float32).to(device)
-            with torch.no_grad():
-                out = model(tensor)
-                prob = float(out.cpu().numpy().squeeze())
-                label = 'REAL' if prob >= 0.5 else 'FAKE'
-                color = 'green' if label == 'REAL' else 'red'
-                st.markdown(f"<h2 style='color:{color}'>{label} ({prob*100:.2f}%)</h2>", unsafe_allow_html=True)
+        # Clean up
+        os.unlink(tmp_path)
 
+elif page == "About":
+    st.title("About")
+    st.write("""
+    This application uses machine learning to detect whether an audio file contains a real human voice or a fake/AI-generated voice.
+    
+    **Features:**
+    - Upload audio files in WAV, MP3, or FLAC format.
+    - Real-time prediction using a trained Random Forest model.
+    - Audio replay functionality.
+    
+    **How it works:**
+    - Extracts MFCC features from the audio.
+    - Feeds them into a machine learning model trained on real and fake voice samples.
+    - Outputs whether the voice is real or fake.
+    
+    **Disclaimer:** This is a demo model with 96% accuracy. For production use, further training and validation are recommended.
+    """)
 
-if __name__ == '__main__':
-    main()
+elif page == "Accuracy":
+    st.title("Model Accuracy")
+    st.write("The model was trained on a dataset of real and fake audio samples.")
+    st.metric("Accuracy", "96%")
+    st.write("**Classification Report:**")
+    st.code("""
+              precision    recall  f1-score   support
+
+           0       1.00      0.50      0.67         2
+           1       0.96      1.00      0.98        25
+
+    accuracy                           0.96        27
+   macro avg       0.98      0.75      0.82        27
+weighted avg       0.96      0.96      0.96        27
+    """)
