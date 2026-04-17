@@ -1,372 +1,594 @@
-import React, {useState, useRef, useEffect} from 'react'
-import {Play, UploadCloud, AlertCircle, CheckCircle, Settings, Github, Twitter} from 'lucide-react'
-import {AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer} from 'recharts'
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Home,
+  Info,
+  Mic2,
+  History as HistoryIcon,
+  UploadCloud,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Trash2,
+  Volume2,
+} from "lucide-react";
 
-const mockSpectrogram = Array.from({length: 32}).map((_, i)=>({x: i, v: Math.abs(Math.sin(i/4))* (Math.random()*0.8+0.3)}))
-const mockWaveform = Array.from({length: 64}).map((_, i)=>({x: i, y: Math.sin(i/4) * (Math.random()*0.7+0.3)}))
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5001";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
-
-function Header(){
-  return (
-    <header className="py-6 px-6 flex items-center justify-between">
-      <div className="flex items-center gap-4">
-        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#3b82f6] to-[#a78bfa] flex items-center justify-center shadow-lg">
-          <svg className="w-7 h-7 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v18" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        </div>
-        <div>
-          <h1 className="text-lg font-semibold">Tamil Deepfake Detector</h1>
-          <p className="text-sm text-slate-400">AI-powered detection of synthetic Tamil speech</p>
-        </div>
-      </div>
-      <nav className="flex items-center gap-4">
-        <a className="text-slate-300 hover:text-white" href="#about">About</a>
-        <a className="text-slate-300 hover:text-white" href="#model">Model</a>
-        <div className="flex gap-3">
-          <a aria-label="github" className="p-2 glass rounded-md" href="#"><Github size={16} /></a>
-          <a aria-label="twitter" className="p-2 glass rounded-md" href="#"><Twitter size={16} /></a>
-        </div>
-      </nav>
-    </header>
-  )
+function cx(...parts) {
+  return parts.filter(Boolean).join(" ");
 }
 
-function Hero(){
+function formatDateTime(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString();
+  } catch {
+    return iso || "—";
+  }
+}
+
+function PredictionPill({ prediction, confidence }) {
+  const isReal = prediction === "REAL";
   return (
-    <section className="px-6 py-16">
-      <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-8 items-center">
-        <div>
-          <h2 className="text-4xl md:text-5xl font-extrabold leading-tight gradient-anim">🎙️ Tamil Deepfake Audio Detector</h2>
-          <p className="mt-4 text-slate-300 max-w-xl">AI-Powered Detection of Synthetic Tamil Speech — fast, accurate, and designed for production.</p>
-          <div className="mt-6 flex gap-4">
-            <a href="#upload" className="px-5 py-3 bg-gradient-to-r from-[#60a5fa] to-[#a78bfa] rounded-lg text-black font-semibold shadow hover:scale-105 transition">Get started</a>
-            <a href="#about" className="px-5 py-3 border border-slate-700 rounded-lg text-slate-200 glass">How it works</a>
+    <div
+      className={cx(
+        "inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold",
+        isReal
+          ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+          : "bg-rose-50 text-rose-800 border border-rose-200"
+      )}
+    >
+      {isReal ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+      <span>{prediction || "—"}</span>
+      {typeof confidence === "number" && (
+        <span className="font-medium opacity-80">{confidence}%</span>
+      )}
+    </div>
+  );
+}
+
+function TopNav({ page, setPage }) {
+  const nav = [
+    { key: "home", label: "Home", icon: Home },
+    { key: "audio", label: "Audio", icon: Mic2 },
+    { key: "history", label: "History", icon: HistoryIcon },
+  ];
+
+  return (
+    <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[rgba(234,246,234,0.65)] backdrop-blur">
+      <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-[var(--olive)] to-[var(--olive-2)] text-white flex items-center justify-center shadow-soft">
+            <Volume2 size={18} />
           </div>
-        </div>
-        <div className="relative">
-            <div className="h-56 glass rounded-xl p-6 glow">
-            <div className="h-full flex flex-col justify-center items-center text-center">
-              <div className="text-slate-300">Upload a Tamil audio file to analyze</div>
-              <div className="mt-4 text-sm text-slate-400">Supports WAV, MP3, FLAC • Real-time API detection</div>
+          <div>
+            <div className="text-lg font-bold tracking-tight">VoiceShield</div>
+            <div className="text-xs text-slate-600">
+              Real vs Fake voice detection
             </div>
           </div>
         </div>
+
+        <nav className="flex items-center gap-2">
+          {nav.map((item) => {
+            const Icon = item.icon;
+            const active = page === item.key;
+            return (
+              <button
+                key={item.key}
+                onClick={() => setPage(item.key)}
+                className={cx(
+                  "px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition",
+                  active
+                    ? "bg-white border border-[var(--border)] shadow-soft text-[var(--olive)]"
+                    : "text-slate-700 hover:bg-white/70 hover:border hover:border-[var(--border)]"
+                )}
+              >
+                <Icon size={16} />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
       </div>
+    </header>
+  );
+}
+
+function SectionCard({ title, icon: Icon, children, right }) {
+  return (
+    <section className="glass shadow-soft rounded-2xl p-6">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          {Icon ? (
+            <div className="h-10 w-10 rounded-xl bg-[rgba(85,107,47,0.10)] border border-[var(--border)] flex items-center justify-center text-[var(--olive)]">
+              <Icon size={18} />
+            </div>
+          ) : null}
+          <h2 className="text-lg font-bold">{title}</h2>
+        </div>
+        {right}
+      </div>
+      <div className="mt-4">{children}</div>
     </section>
-  )
+  );
 }
 
-function FileUploader({onFile}){
-  const [hover, setHover] = useState(false)
-  const inputRef = useRef()
-
-  function handleFiles(files){
-    const f = files?.[0]
-    if(f) onFile(f)
-  }
-
+function HomePage() {
   return (
-    <div id="upload" className="w-full">
-      <div
-        onDragOver={(e)=>{e.preventDefault(); setHover(true)}}
-        onDragLeave={()=>setHover(false)}
-        onDrop={(e)=>{e.preventDefault(); setHover(false); handleFiles(e.dataTransfer.files)}}
-        className={`w-full p-8 rounded-xl glass border border-slate-700 flex flex-col items-center justify-center text-center transition ${hover? 'scale-102 shadow-lg':''}`}
-      >
-        <UploadCloud className="text-slate-200" />
-        <div className="mt-3 text-slate-200 font-medium">Drag & drop audio file</div>
-        <div className="mt-2 text-sm text-slate-400">WAV, MP3, FLAC • Up to 30MB</div>
-        <div className="mt-4">
-          <button onClick={()=>inputRef.current.click()} className="px-4 py-2 bg-[#3b82f6] rounded-md font-medium text-black">Browse files</button>
+    <div className="grid gap-6">
+      <SectionCard title="About The Project" icon={Info}>
+        <p className="text-slate-700 leading-relaxed">
+          This web app detects whether an uploaded voice recording is{" "}
+          <span className="font-semibold">REAL</span> or{" "}
+          <span className="font-semibold">FAKE</span> (AI-generated) using your
+          trained ML model.
+        </p>
+        <div className="mt-4 grid md:grid-cols-3 gap-4">
+          <div className="rounded-xl border border-[var(--border)] bg-white/60 p-4">
+            <div className="text-sm font-bold text-olive">Upload</div>
+            <div className="mt-1 text-sm text-slate-700">
+              Drop an audio file in the Audio tab (WAV/MP3/FLAC/etc).
+            </div>
+          </div>
+          <div className="rounded-xl border border-[var(--border)] bg-white/60 p-4">
+            <div className="text-sm font-bold text-olive">Predict</div>
+            <div className="mt-1 text-sm text-slate-700">
+              The backend forwards the audio to the FastAPI ML service for
+              inference.
+            </div>
+          </div>
+          <div className="rounded-xl border border-[var(--border)] bg-white/60 p-4">
+            <div className="text-sm font-bold text-olive">History</div>
+            <div className="mt-1 text-sm text-slate-700">
+              Every analyzed file is stored and shown in the History tab.
+            </div>
+          </div>
         </div>
-        <input ref={inputRef} type="file" accept="audio/*" className="hidden" onChange={(e)=>handleFiles(e.target.files)} aria-label="Upload audio file" />
-      </div>
-    </div>
-  )
-}
+      </SectionCard>
 
-function AudioPlayer({file}){
-  if(!file) return null
-  const url = URL.createObjectURL(file)
-  return (
-    <div className="mt-4 glass p-3 rounded-md flex items-center gap-4">
-      <audio controls src={url} className="w-full"/>
-      <div className="text-sm text-slate-300">{file.name}</div>
-    </div>
-  )
-}
-
-function CircularConfidence({value, fake}){
-  const radius = 48
-  const stroke = 10
-  const normalized = Math.max(0, Math.min(100, Math.round(value)))
-  const c = 2*Math.PI*radius
-  const dash = c * (normalized/100)
-  return (
-    <div className="w-40 h-40 flex items-center justify-center">
-      <svg width="120" height="120" viewBox="0 0 120 120">
-        <defs>
-          <linearGradient id="g1" x1="0" x2="1">
-            <stop offset="0%" stopColor="#60a5fa" />
-            <stop offset="100%" stopColor={fake? '#ef4444' : '#22c55e'} />
-          </linearGradient>
-        </defs>
-        <g transform="translate(60,60)">
-          <circle r={radius} stroke="#0f172a" strokeWidth={stroke} fill="none" />
-          <circle r={radius} stroke="url(#g1)" strokeWidth={stroke} strokeLinecap="round" fill="none" strokeDasharray={`${dash} ${c-dash}`} transform="rotate(-90)" style={{transition:'stroke-dasharray 900ms ease'}} />
-          <text x="0" y="6" fill="#e6eef8" fontSize="18" fontWeight="700" textAnchor="middle">{normalized}%</text>
-        </g>
-      </svg>
-    </div>
-  )
-}
-
-function ResultCard({result, confidence, processingTime}){
-  if(!result) return null
-  const fake = result === 'FAKE'
-  return (
-    <div className="mt-6 p-6 rounded-xl glass flex gap-6 items-center">
-      <div>
-        <div className={`px-4 py-2 rounded-full text-sm font-semibold ${fake? 'bg-red-600/20 text-red-300':'bg-green-600/20 text-green-300'}`}>{result} {fake? '⚠️':'✅'}</div>
-        <div className="mt-4 text-slate-300">Confidence</div>
-      </div>
-      <CircularConfidence value={confidence} fake={fake} />
-      <div className="flex-1">
-        <div className="text-slate-400">Processing time: <span className="text-slate-200">{processingTime.toFixed(2)}s</span></div>
-        <div className={`mt-4 p-4 rounded-md ${fake? 'bg-red-900/20':'bg-green-900/10'}`}>
-          <div className="text-sm text-slate-300">{fake? 'This audio appears to be AI-generated (synthetic Tamil speech).' : 'This audio appears to be authentic human speech.'} Model confidence: {confidence}%</div>
+      <SectionCard title="How The System Connects">
+        <div className="rounded-xl border border-[var(--border)] bg-white/60 p-4 text-sm text-slate-700 leading-relaxed">
+          <div className="font-semibold text-slate-900">
+            React UI → Node Backend → FastAPI ML Service
+          </div>
+          <ul className="mt-2 list-disc pl-5">
+            <li>
+              React sends the uploaded audio to{" "}
+              <span className="font-mono">{API_BASE_URL}/api/analyze</span>
+            </li>
+            <li>
+              Node forwards it to the ML service{" "}
+              <span className="font-mono">/predict</span> and stores the result
+            </li>
+            <li>React shows the result and updates History</li>
+          </ul>
         </div>
-      </div>
+      </SectionCard>
     </div>
-  )
+  );
 }
 
-function SpectrogramChart(){
-  return (
-    <div className="h-48 glass rounded-xl p-4">
-      <div className="text-sm text-slate-300 mb-2">Mel Spectrogram (mock)</div>
-      <ResponsiveContainer width="100%" height={120}>
-        <AreaChart data={mockSpectrogram}>
-          <defs>
-            <linearGradient id="colorV" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="5%" stopColor="#a78bfa" stopOpacity={0.9}/>
-              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/>
-            </linearGradient>
-          </defs>
-          <Area type="monotone" dataKey="v" stroke="#60a5fa" fillOpacity={1} fill="url(#colorV)" />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-  )
-}
+function AudioPage({ onAnalyzeComplete, apiStatus }) {
+  const [file, setFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
 
-function WaveformDisplay(){
-  return (
-    <div className="h-36 glass rounded-xl p-4 mt-4">
-      <div className="text-sm text-slate-300 mb-2">Waveform (mock)</div>
-      <ResponsiveContainer width="100%" height={120}>
-        <LineChart data={mockWaveform}>
-          <Line stroke="#ec4899" dataKey="y" dot={false} strokeWidth={2} />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  )
-}
+  const inputRef = useRef(null);
 
-function StatsCards({file, audioInfo}){
-  const duration = audioInfo?.duration || '—'
-  const sampleRate = audioInfo?.sample_rate || '—'
-  const size = audioInfo?.file_size ? audioInfo.file_size + ' KB' : (file? (Math.max(10, Math.round(file.size/1024)) + ' KB') : '—')
-  return (
-    <div className="grid grid-cols-3 gap-4 mt-4">
-      <div className="glass p-3 rounded-md text-center">
-        <div className="text-xs text-slate-400">Duration</div>
-        <div className="text-lg font-semibold">{duration}{duration !== '—' && 's'}</div>
-      </div>
-      <div className="glass p-3 rounded-md text-center">
-        <div className="text-xs text-slate-400">Sample Rate</div>
-        <div className="text-lg font-semibold">{sampleRate !== '—' ? sampleRate + 'Hz' : sampleRate}</div>
-      </div>
-      <div className="glass p-3 rounded-md text-center">
-        <div className="text-xs text-slate-400">File Size</div>
-        <div className="text-lg font-semibold">{size}</div>
-      </div>
-    </div>
-  )
-}
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
 
-function ModelInfoCard(){
-  const [acc, setAcc] = useState(0)
-  useEffect(()=>{
-    let i=0
-    const t = setInterval(()=>{
-      i+=1
-      setAcc(prev=> Math.min(94.5, prev + (94.5/20)))
-      if(i>20) clearInterval(t)
-    },80)
-    return ()=>clearInterval(t)
-  },[])
-  return (
-    <aside id="model" className="mt-6 glass p-4 rounded-xl">
-      <h3 className="font-semibold">Model Info</h3>
-      <div className="mt-3 text-sm text-slate-300">Architecture: CNN-based audio classifier</div>
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <div className="p-3 glass rounded-md text-center">
-          <div className="text-xs text-slate-400">Accuracy</div>
-          <div className="text-lg font-semibold">{acc.toFixed(1)}%</div>
-        </div>
-        <div className="p-3 glass rounded-md text-center">
-          <div className="text-xs text-slate-400">Precision</div>
-          <div className="text-lg font-semibold">0.93</div>
-        </div>
-        <div className="p-3 glass rounded-md text-center">
-          <div className="text-xs text-slate-400">Recall</div>
-          <div className="text-lg font-semibold">0.95</div>
-        </div>
-        <div className="p-3 glass rounded-md text-center">
-          <div className="text-xs text-slate-400">F1-score</div>
-          <div className="text-lg font-semibold">0.94</div>
-        </div>
-      </div>
-      <div className="mt-4 text-sm text-slate-400">Trained on 6GB Tamil audio data • Demo mock metrics</div>
-    </aside>
-  )
-}
-
-export default function App(){
-  const [file, setFile] = useState(null)
-  const [processing, setProcessing] = useState(false)
-  const [result, setResult] = useState(null)
-  const [confidence, setConfidence] = useState(0)
-  const [error, setError] = useState(null)
-  const [audioInfo, setAudioInfo] = useState(null)
-  const [processingTime, setProcessingTime] = useState(0)
-
-  function handleFile(f){
-    setFile(f)
-    setResult(null)
-    setConfidence(0)
-    setError(null)
-    setAudioInfo(null)
-  }
-
-  async function analyze(){
-    if(!file) return
-    setProcessing(true)
-    setResult(null)
-    setConfidence(0)
-    setError(null)
-    
+  async function analyze() {
+    if (!file || busy) return;
+    setBusy(true);
+    setError(null);
+    setResult(null);
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      
-      const startTime = performance.now()
-      const response = await fetch(`${API_BASE_URL}/api/predict`, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Accept': 'application/json'
-        }
-      })
-      const endTime = performance.now()
-      
-      if (!response.ok) {
-        const errData = await response.json()
-        throw new Error(errData.error || `API error: ${response.status}`)
+      const form = new FormData();
+      form.append("file", file);
+      const resp = await fetch(`${API_BASE_URL}/api/analyze`, {
+        method: "POST",
+        body: form,
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(data.error || data.detail || `API error: ${resp.status}`);
       }
-      
-      const data = await response.json()
-      
-      if (data.success) {
-        setResult(data.prediction)
-        setConfidence(data.confidence)
-        setAudioInfo(data.audio_info)
-        setProcessingTime(data.processing_time_seconds || (endTime - startTime) / 1000)
-      } else {
-        setError(data.error || 'Prediction failed')
+      if (!data?.item) {
+        throw new Error("Unexpected server response");
       }
-    } catch (err) {
-      console.error('API error:', err)
-      setError(err.message || 'Failed to connect to API. Make sure the backend is running on port 5000.')
+      setResult(data.item);
+      onAnalyzeComplete?.(data.item);
+    } catch (e) {
+      setError(e?.message || "Failed to analyze audio");
     } finally {
-      setProcessing(false)
+      setBusy(false);
     }
   }
 
-  return (
-    <div className="min-h-screen font-sans bg-gradient-to-b from-[#0a0e1a] via-[#0f172a] to-[#1e293b] text-slate-100">
-      <div className="max-w-7xl mx-auto">
-        <Header />
-        <Hero />
+  function onDrop(e) {
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith("audio/") && !f.name.match(/\.(wav|mp3|flac|ogg|m4a|webm)$/i)) {
+      setError("Please drop an audio file");
+      return;
+    }
+    setFile(f);
+  }
 
-        <main className="px-6 pb-16">
-          <div className="grid md:grid-cols-3 gap-6">
-            <div className="md:col-span-2">
-              <div className="glass p-6 rounded-xl">
-                <h4 className="font-semibold">Upload & Analyze</h4>
-                <p className="text-sm text-slate-400">Drop a Tamil audio file to start detection</p>
-                <div className="mt-4">
-                  <FileUploader onFile={handleFile} />
-                  <AudioPlayer file={file} />
-                  
-                  {error && (
-                    <div className="mt-4 p-4 rounded-md bg-red-900/20 border border-red-700/50 flex gap-3">
-                      <AlertCircle size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <div className="font-semibold text-red-300">Error</div>
-                        <div className="text-sm text-red-200">{error}</div>
-                      </div>
-                    </div>
+  return (
+    <div className="grid gap-6">
+      <SectionCard
+        title="Upload Audio"
+        icon={UploadCloud}
+        right={
+          <div className="text-xs text-slate-600">
+            Backend:{" "}
+            <span className={cx(apiStatus.ok ? "text-emerald-700" : "text-rose-700")}>
+              {apiStatus.ok ? "Connected" : "Not connected"}
+            </span>
+          </div>
+        }
+      >
+        <div
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={onDrop}
+          className={cx(
+            "rounded-2xl border-2 border-dashed p-6 md:p-10 text-center transition",
+            "border-[var(--border)] bg-white/55 hover:bg-white/70"
+          )}
+        >
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[rgba(85,107,47,0.10)] border border-[var(--border)] text-[var(--olive)]">
+            <UploadCloud />
+          </div>
+          <div className="mt-4 text-base font-bold">
+            Drag & drop an audio file
+          </div>
+          <div className="mt-1 text-sm text-slate-600">
+            or choose a file from your device
+          </div>
+          <div className="mt-4 flex items-center justify-center gap-3">
+            <input
+              ref={inputRef}
+              type="file"
+              accept="audio/*"
+              className="hidden"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
+            <button
+              onClick={() => inputRef.current?.click()}
+              className="px-4 py-2 rounded-lg bg-[var(--olive)] text-white font-semibold hover:opacity-95 active:opacity-90"
+              disabled={busy}
+            >
+              Choose file
+            </button>
+            <button
+              onClick={() => {
+                setFile(null);
+                setResult(null);
+                setError(null);
+              }}
+              className="px-4 py-2 rounded-lg border border-[var(--border)] bg-white/60 font-semibold text-slate-700 hover:bg-white"
+              disabled={busy}
+            >
+              Reset
+            </button>
+          </div>
+          <div className="mt-3 text-xs text-slate-500">
+            Supported: WAV, MP3, FLAC, OGG, M4A, WebM (max 50MB)
+          </div>
+        </div>
+
+        {file ? (
+          <div className="mt-4 rounded-2xl border border-[var(--border)] bg-white/60 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-bold text-slate-900">Selected</div>
+                <div className="text-sm text-slate-700 break-all">{file.name}</div>
+              </div>
+              <button
+                onClick={analyze}
+                disabled={busy || !apiStatus.ok}
+                className={cx(
+                  "px-4 py-2 rounded-lg font-semibold text-white flex items-center gap-2",
+                  busy || !apiStatus.ok ? "bg-slate-400" : "bg-[var(--olive-2)] hover:opacity-95"
+                )}
+              >
+                {busy ? <Loader2 className="animate-spin" size={18} /> : null}
+                {busy ? "Analyzing..." : "Analyze"}
+              </button>
+            </div>
+            {previewUrl ? (
+              <audio className="mt-3 w-full" controls src={previewUrl} />
+            ) : null}
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
+            <div className="font-semibold">Error</div>
+            <div className="text-sm mt-1">{error}</div>
+          </div>
+        ) : null}
+
+        {result ? (
+          <div className="mt-4 rounded-2xl border border-[var(--border)] bg-white/70 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm text-slate-600">
+                Result for <span className="font-semibold">{result.fileName}</span>
+              </div>
+              <PredictionPill
+                prediction={result.prediction}
+                confidence={result.confidence}
+              />
+            </div>
+            <div className="mt-3">
+              <div className="h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className={cx(
+                    "h-full",
+                    result.prediction === "REAL" ? "bg-emerald-500" : "bg-rose-500"
                   )}
-                  
-                  <div className="mt-4 flex items-center gap-3">
-                    <button onClick={analyze} disabled={!file || processing} className="px-4 py-3 bg-gradient-to-r from-[#60a5fa] to-[#a78bfa] rounded-md text-black font-semibold disabled:opacity-50 hover:scale-105 transition">
-                      {processing? 'Analyzing...' : 'Analyze'}
-                    </button>
-                    {processing && <div className="text-slate-400">Processing <span className="ml-2 inline-block animate-pulse">●</span></div>}
-                  </div>
-                  
-                  <ResultCard result={result} confidence={confidence} processingTime={processingTime} />
-                  
-                  {result && (
-                    <>
-                      <SpectrogramChart />
-                      <WaveformDisplay />
-                      <StatsCards file={file} audioInfo={audioInfo} />
-                    </>
-                  )}
-                </div>
+                  style={{ width: `${Math.max(0, Math.min(100, result.confidence))}%` }}
+                />
+              </div>
+              <div className="mt-2 text-xs text-slate-600">
+                Analyzed at {formatDateTime(result.uploadedAt)}
               </div>
             </div>
-            <aside>
-              <ModelInfoCard />
-              <div className="mt-6 glass p-4 rounded-xl">
-                <h4 className="font-semibold">Sample Predictions</h4>
-                <div className="mt-3 text-sm text-slate-300">87.3% REAL • 92.1% FAKE</div>
-                <div className="mt-4">
-                  <button className="w-full p-3 rounded-md bg-[#111827] border border-slate-700 text-sm">View dataset</button>
-                </div>
-              </div>
-            </aside>
           </div>
+        ) : null}
+      </SectionCard>
+    </div>
+  );
+}
 
-          <section id="about" className="mt-10 glass p-6 rounded-xl">
-            <h3 className="font-semibold">How it works</h3>
-            <ol className="mt-3 list-decimal list-inside text-slate-300">
-              <li>Upload audio</li>
-              <li>Extract features (mel spectrograms, MFCCs)</li>
-              <li>Run CNN classifier to detect synthetic patterns</li>
-              <li>Show results, visualizations, and confidence score</li>
-            </ol>
-            <div className="mt-4 text-sm text-slate-400">Tech: React + Flask + PyTorch • Backend runs at localhost:5000</div>
-          </section>
-        </main>
+function HistoryPage({
+  history,
+  selectedId,
+  setSelectedId,
+  onClear,
+  refreshing,
+  onRefresh,
+}) {
+  const selected = useMemo(
+    () => history.find((x) => x.id === selectedId) || null,
+    [history, selectedId]
+  );
 
-        <footer className="p-6 text-center text-slate-400">
-          <div>© {new Date().getFullYear()} Tamil Deepfake Detector • Built with ❤️</div>
-        </footer>
+  return (
+    <div className="grid md:grid-cols-5 gap-6">
+      <div className="md:col-span-2">
+        <SectionCard
+          title="History"
+          icon={HistoryIcon}
+          right={
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onRefresh}
+                disabled={refreshing}
+                className="px-3 py-2 rounded-lg border border-[var(--border)] bg-white/60 text-sm font-semibold hover:bg-white disabled:opacity-70"
+              >
+                {refreshing ? "Refreshing..." : "Refresh"}
+              </button>
+              <button
+                onClick={onClear}
+                disabled={history.length === 0}
+                className="px-3 py-2 rounded-lg bg-rose-600 text-white text-sm font-semibold hover:opacity-95 disabled:opacity-60 flex items-center gap-2"
+              >
+                <Trash2 size={16} />
+                Clear
+              </button>
+            </div>
+          }
+        >
+          {history.length === 0 ? (
+            <div className="rounded-xl border border-[var(--border)] bg-white/60 p-4 text-sm text-slate-700">
+              No history yet. Analyze an audio file to see it here.
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {history.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setSelectedId(item.id)}
+                  className={cx(
+                    "text-left rounded-2xl border p-4 transition",
+                    selectedId === item.id
+                      ? "border-[var(--olive-2)] bg-white shadow-soft"
+                      : "border-[var(--border)] bg-white/55 hover:bg-white/75"
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-bold text-slate-900 truncate">
+                      {item.fileName}
+                    </div>
+                    <span className="text-xs text-slate-500">
+                      {new Date(item.uploadedAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <PredictionPill
+                      prediction={item.prediction}
+                      confidence={item.confidence}
+                    />
+                    <span className="text-xs text-slate-500">
+                      {new Date(item.uploadedAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+      </div>
+
+      <div className="md:col-span-3">
+        <SectionCard title="Details" icon={Mic2}>
+          {!selected ? (
+            <div className="rounded-xl border border-[var(--border)] bg-white/60 p-4 text-sm text-slate-700">
+              Select a history item to see details and play the audio.
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-[var(--border)] bg-white/70 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm text-slate-600">File</div>
+                  <div className="text-base font-bold break-all">
+                    {selected.fileName}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-600">
+                    {formatDateTime(selected.uploadedAt)}
+                  </div>
+                </div>
+                <PredictionPill
+                  prediction={selected.prediction}
+                  confidence={selected.confidence}
+                />
+              </div>
+              <audio
+                className="mt-4 w-full"
+                controls
+                src={`${API_BASE_URL}${selected.audioUrl}`}
+              />
+              <div className="mt-4 text-sm text-slate-700">
+                {selected.prediction === "REAL" ? (
+                  <div>
+                    <span className="font-semibold text-emerald-800">
+                      Looks authentic.
+                    </span>{" "}
+                    The model considers this audio similar to real-voice patterns.
+                  </div>
+                ) : (
+                  <div>
+                    <span className="font-semibold text-rose-800">
+                      Potentially AI-generated.
+                    </span>{" "}
+                    The model flagged this audio as an outlier compared to real-voice patterns.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </SectionCard>
       </div>
     </div>
-  )
+  );
 }
+
+export default function App() {
+  const [page, setPage] = useState("home");
+  const [history, setHistory] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [apiStatus, setApiStatus] = useState({ ok: false, checked: false });
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function refreshHistory() {
+    setRefreshing(true);
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/history`);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `API error: ${resp.status}`);
+      const items = Array.isArray(data.items) ? data.items : [];
+      setHistory(items);
+      if (!selectedId && items[0]?.id) setSelectedId(items[0].id);
+    } catch {
+      // ignore; UI already indicates connection state
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const resp = await fetch(`${API_BASE_URL}/api/health`);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error("health failed");
+        if (!mounted) return;
+        setApiStatus({ ok: true, checked: true, info: data });
+        await refreshHistory();
+      } catch {
+        if (!mounted) return;
+        setApiStatus({ ok: false, checked: true });
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function clearHistory() {
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/history`, { method: "DELETE" });
+      if (!resp.ok) return;
+      setHistory([]);
+      setSelectedId(null);
+    } catch {
+      // ignore
+    }
+  }
+
+  function onAnalyzeComplete(item) {
+    setHistory((prev) => [item, ...prev]);
+    setSelectedId(item.id);
+  }
+
+  return (
+    <div className="min-h-full">
+      <TopNav page={page} setPage={setPage} />
+
+      <main className="mx-auto max-w-6xl px-6 py-10">
+        {!apiStatus.ok && apiStatus.checked ? (
+          <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+            <div className="font-bold">Backend not connected</div>
+            <div className="mt-1 text-sm">
+              Start the Node backend on{" "}
+              <span className="font-mono">http://localhost:5001</span> and the ML
+              service on <span className="font-mono">http://localhost:8000</span>.
+            </div>
+          </div>
+        ) : null}
+
+        {page === "home" ? <HomePage /> : null}
+        {page === "audio" ? (
+          <AudioPage onAnalyzeComplete={onAnalyzeComplete} apiStatus={apiStatus} />
+        ) : null}
+        {page === "history" ? (
+          <HistoryPage
+            history={history}
+            selectedId={selectedId}
+            setSelectedId={setSelectedId}
+            onClear={clearHistory}
+            refreshing={refreshing}
+            onRefresh={refreshHistory}
+          />
+        ) : null}
+      </main>
+
+      <footer className="pb-10 text-center text-xs text-slate-600">
+        <div>
+          VoiceShield • UI palette: light green / white / olive •{" "}
+          <span className="font-mono">{API_BASE_URL}</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
