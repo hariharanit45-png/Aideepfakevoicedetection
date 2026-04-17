@@ -1,7 +1,11 @@
 """
 VoiceShield - Web API for voice REAL/FAKE prediction.
-Run from ml-service: uvicorn app:app --host 0.0.0.0 --port 8000
-Then open http://localhost:8000 in your browser.
+
+Recommended usage (from `ml-service/`):
+  uvicorn app:app --host 0.0.0.0 --port 8000
+
+This service is intended to be called by a frontend backend (e.g. Node/Express)
+via multipart upload: POST /predict (field name: `file`).
 """
 
 import os
@@ -18,9 +22,18 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.predict import predict as run_predict
+from src.predict import predict_with_details
 
-MODEL_PATH = ROOT / "models" / "voice_model.pkl"
+DEFAULT_MODEL_PATH = ROOT / "models" / "voice_model.pkl"
+LEGACY_MODEL_PATH = ROOT.parent / "model.pkl"
+MODEL_PATH = Path(
+  os.getenv(
+    "VOICESHIELD_MODEL_PATH",
+    str(LEGACY_MODEL_PATH if LEGACY_MODEL_PATH.is_file() else DEFAULT_MODEL_PATH),
+  )
+).resolve()
+MAX_FILE_SIZE_MB = int(os.getenv("VOICESHIELD_MAX_FILE_SIZE_MB", "50"))
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 app = FastAPI(title="VoiceShield", description="AI-generated voice detection")
 
@@ -114,28 +127,49 @@ async def predict(file: UploadFile = File(...)):
     """
     if not file.filename or not file.filename.lower().strip():
         raise HTTPException(status_code=400, detail="No file selected")
+
     suffix = Path(file.filename).suffix or ".wav"
     if suffix.lower() not in {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm"}:
         suffix = ".wav"
+
     try:
         contents = await file.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file")
+
+    if len(contents) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Max size is {MAX_FILE_SIZE_MB} MB",
+        )
+
     if not MODEL_PATH.is_file():
         raise HTTPException(
             status_code=503,
             detail="Model not found. Train first: python run_pipeline.py data",
         )
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
+
     try:
-        label, confidence = run_predict(tmp_path, str(MODEL_PATH))
+        result = predict_with_details(tmp_path, str(MODEL_PATH))
+        label = result["label"]
+        confidence = result["confidence"]
         return {
+            "success": True,
             "prediction": label,
             "confidence": round(confidence * 100),
+            "confidence_0_to_1": confidence,
+            "model_type": result.get("model_type"),
+            "raw_score": result.get("raw_score"),
+            "file_name": file.filename,
+            "file_size_bytes": len(contents),
+            "model_loaded": True,
             "message": f"Prediction: {label}, Confidence: {round(confidence * 100)}%",
         }
     except Exception as e:
@@ -150,7 +184,20 @@ async def predict(file: UploadFile = File(...)):
 @app.get("/health")
 def health():
     """Health check; reports if model is loaded."""
+    model_type = None
+    model_error = None
+
+    if MODEL_PATH.is_file():
+        try:
+            model_type = "legacy_binary_classifier" if MODEL_PATH.name.lower() == "model.pkl" else "one_class_iforest"
+        except Exception as e:
+            model_error = str(e)
+
     return {
         "status": "ok",
         "model_loaded": MODEL_PATH.is_file(),
+        "model_path": str(MODEL_PATH),
+        "model_type": model_type,
+        "model_error": model_error,
+        "max_file_size_mb": MAX_FILE_SIZE_MB,
     }

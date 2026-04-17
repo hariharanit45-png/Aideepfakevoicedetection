@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 from src.predict import predict
 
 MODEL_PATH = ROOT / "models" / "voice_model.pkl"
+DEBUG_DEFAULT = os.getenv("VOICESHIELD_DEBUG", "0") == "1"
 
 # Page configuration
 st.set_page_config(
@@ -89,6 +90,17 @@ st.markdown("""
 st.markdown('<div class="main-header">🛡️ VoiceShield</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">AI-Generated Voice Detection System</div>', unsafe_allow_html=True)
 
+debug_mode = st.sidebar.checkbox("Enable debug mode", value=DEBUG_DEFAULT)
+
+if debug_mode:
+    st.write("### Debug Information")
+    st.write(f"Current working directory: {os.getcwd()}")
+    st.write(f"App root: {ROOT}")
+    st.write(f"Model path: {MODEL_PATH}")
+    st.write(f"Model exists: {MODEL_PATH.is_file()}")
+    st.write(f"Python version: {sys.version}")
+    st.write(f"Running on Streamlit Cloud: {bool(os.environ.get('STREAMLIT_SHARING_MODE'))}")
+
 # Check if model exists
 if not MODEL_PATH.is_file():
     st.markdown("""
@@ -122,13 +134,19 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
+    uploaded_bytes = uploaded_file.getvalue()
+
     # Display file info
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(f"**Filename:** {uploaded_file.name}")
     with col2:
-        file_size_kb = len(uploaded_file.getvalue()) / 1024
+        file_size_kb = len(uploaded_bytes) / 1024
         st.markdown(f"**Size:** {file_size_kb:.2f} KB")
+
+    if debug_mode:
+        st.write(f"Upload MIME type: {uploaded_file.type}")
+        st.write(f"Upload size bytes: {len(uploaded_bytes)}")
     
     # Audio player
     st.markdown("### 🎵 Audio Preview")
@@ -139,21 +157,24 @@ if uploaded_file is not None:
     
     if st.button("🚀 Analyze Voice", type="primary", use_container_width=True):
         with st.spinner("🔄 Analyzing audio... This may take a moment..."):
+            tmp_path = None
             try:
                 # Save uploaded file temporarily
                 suffix = Path(uploaded_file.name).suffix or ".wav"
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_file.write(uploaded_bytes)
                     tmp_path = tmp_file.name
+
+                if debug_mode:
+                    st.write(f"Temporary file path: {tmp_path}")
+                    st.write(f"Temporary file exists: {Path(tmp_path).is_file()}")
                 
                 # Run prediction
                 label, confidence = predict(tmp_path, str(MODEL_PATH))
-                
-                # Clean up temp file
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+
+                if debug_mode:
+                    st.write(f"Raw label: {label}")
+                    st.write(f"Raw confidence (0-1): {confidence}")
                 
                 # Display results
                 st.markdown("---")
@@ -161,7 +182,7 @@ if uploaded_file is not None:
                 if label == "REAL":
                     st.markdown(f"""
                         <div class="result-box result-real">
-                            Prediction: FAKE
+                            Prediction: REAL
                             <div class="confidence-text">Confidence: {int(confidence * 100)}%</div>
                         </div>
                     """, unsafe_allow_html=True)
@@ -171,7 +192,7 @@ if uploaded_file is not None:
                 else:  # FAKE
                     st.markdown(f"""
                         <div class="result-box result-fake">
-                            ✅ Prediction: REAL
+                            Prediction: FAKE
                             <div class="confidence-text">Confidence: {int(confidence * 100)}%</div>
                         </div>
                     """, unsafe_allow_html=True)
@@ -194,6 +215,12 @@ if uploaded_file is not None:
             except Exception as e:
                 st.error(f"❌ Error during analysis: {str(e)}")
                 st.exception(e)
+            finally:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
 else:
     st.markdown("""

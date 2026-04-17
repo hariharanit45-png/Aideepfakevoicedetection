@@ -7,11 +7,29 @@ import pickle
 import numpy as np
 import sys
 from pathlib import Path
+import librosa
+
+import joblib
 
 from .preprocess import load_and_preprocess
 from .extract_features import extract_features_from_waveform, TARGET_SR
 
 MODEL_SAVE_PATH = "models/voice_model.pkl"
+
+
+def _extract_legacy_binary_features(audio_path: str) -> np.ndarray:
+    """
+    Extract features compatible with the legacy RandomForest `model.pkl`.
+    This matches the root-level `utils.extract_features` pipeline.
+    """
+    y, sr = librosa.load(audio_path, sr=TARGET_SR)
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    mfccs_mean = np.mean(mfccs, axis=1)
+    pitch = 0.0
+    jitter = 0.0
+    energy = float(np.mean(librosa.feature.rms(y=y)))
+    features = np.concatenate([mfccs_mean, [pitch, jitter, energy]])
+    return features.astype(np.float64)
 
 
 def _setup_numpy_compatibility():
@@ -26,8 +44,8 @@ def _setup_numpy_compatibility():
         sys.modules['numpy.core'] = numpy._core
 
 
-def _load_artifact(model_path: str) -> dict:
-    """Load pickled model with NumPy compatibility handling"""
+def _load_artifact(model_path: str):
+    """Load model artifact with compatibility handling (pickle/joblib)."""
     path = Path(model_path)
     if not path.is_file():
         raise FileNotFoundError(f"Model file not found: {model_path}")
@@ -47,8 +65,85 @@ def _load_artifact(model_path: str) -> dict:
             ) from e
         raise
     except Exception as e:
-        print(f"Error loading model: {e}")
-        raise
+        try:
+            # Fallback for artifacts saved via joblib.dump (e.g. legacy model.pkl)
+            return joblib.load(path)
+        except Exception:
+            print(f"Error loading model: {e}")
+            raise
+
+
+def _predict_one_class(artifact: dict, audio_path: str) -> tuple[str, float, float]:
+    """Predict using one-class artifact dict: {model, scaler, feature_columns}."""
+    model = artifact["model"]
+    scaler = artifact["scaler"]
+    feature_columns = artifact["feature_columns"]
+
+    waveform = load_and_preprocess(audio_path)
+    feature_vector = extract_features_from_waveform(waveform, TARGET_SR)
+    X = np.array([feature_vector])
+    if X.shape[1] != len(feature_columns):
+        raise ValueError(
+            f"Feature dimension mismatch: got {X.shape[1]}, expected {len(feature_columns)}. "
+            "Retrain the model with the current extract_features pipeline."
+        )
+    X_scaled = scaler.transform(X)
+    prediction = model.predict(X_scaled)[0]  # 1 = inlier (REAL), -1 = outlier (FAKE)
+    decision = float(model.decision_function(X_scaled)[0])
+    confidence = _decision_to_confidence(decision, model)
+    label = "REAL" if prediction == 1 else "FAKE"
+    return label, confidence, decision
+
+
+def _predict_legacy_binary(model, audio_path: str) -> tuple[str, float, float]:
+    """Predict using legacy sklearn binary classifier (0=FAKE, 1=REAL)."""
+    features = _extract_legacy_binary_features(audio_path)
+    X = np.array([features])
+    pred = int(model.predict(X)[0])
+    prob_real = None
+    if hasattr(model, "predict_proba"):
+        try:
+            proba = model.predict_proba(X)[0]
+            class_to_prob = {int(c): float(p) for c, p in zip(model.classes_, proba)}
+            prob_real = class_to_prob.get(1)
+        except Exception:
+            prob_real = None
+
+    if pred == 1:
+        label = "REAL"
+        confidence = prob_real if prob_real is not None else 0.5
+    else:
+        label = "FAKE"
+        confidence = (1.0 - prob_real) if prob_real is not None else 0.5
+    raw_score = prob_real if prob_real is not None else float(pred)
+    return label, float(np.clip(confidence, 0, 1)), float(raw_score)
+
+
+def _artifact_model_type(artifact) -> str:
+    """Return model type identifier for diagnostics."""
+    if isinstance(artifact, dict) and {"model", "scaler", "feature_columns"}.issubset(artifact.keys()):
+        return "one_class_iforest"
+    if hasattr(artifact, "predict"):
+        return "legacy_binary_classifier"
+    raise ValueError("Unsupported model artifact format")
+
+
+def predict_with_details(audio_path: str, model_path: str = MODEL_SAVE_PATH) -> dict:
+    """Run prediction and return label/confidence plus model diagnostics."""
+    artifact = _load_artifact(model_path)
+    model_type = _artifact_model_type(artifact)
+
+    if model_type == "one_class_iforest":
+        label, confidence, raw_score = _predict_one_class(artifact, audio_path)
+    else:
+        label, confidence, raw_score = _predict_legacy_binary(artifact, audio_path)
+
+    return {
+        "label": label,
+        "confidence": float(confidence),
+        "model_type": model_type,
+        "raw_score": float(raw_score),
+    }
 
 
 def predict(audio_path: str, model_path: str = MODEL_SAVE_PATH) -> tuple[str, float]:
@@ -62,28 +157,8 @@ def predict(audio_path: str, model_path: str = MODEL_SAVE_PATH) -> tuple[str, fl
     Returns:
         (label, confidence): "REAL" or "FAKE", and confidence in [0, 1].
     """
-    artifact = _load_artifact(model_path)
-    model = artifact["model"]
-    scaler = artifact["scaler"]
-    feature_columns = artifact["feature_columns"]
-
-    waveform = load_and_preprocess(audio_path)
-    feature_vector = extract_features_from_waveform(waveform, TARGET_SR)
-    # Ensure same order as training
-    X = np.array([feature_vector])  # shape (1, n_features)
-    if X.shape[1] != len(feature_columns):
-        raise ValueError(
-            f"Feature dimension mismatch: got {X.shape[1]}, expected {len(feature_columns)}. "
-            "Retrain the model with the current extract_features pipeline."
-        )
-    X_scaled = scaler.transform(X)
-    prediction = model.predict(X_scaled)[0]  # 1 = inlier (REAL), -1 = outlier (FAKE)
-    # Confidence from decision function (higher = more "normal")
-    decision = model.decision_function(X_scaled)[0]
-    # Map to [0, 1]: shift and scale (decision range is dataset-dependent)
-    confidence = _decision_to_confidence(decision, model)
-    label = "REAL" if prediction == 1 else "FAKE"
-    return label, confidence
+    result = predict_with_details(audio_path, model_path)
+    return result["label"], result["confidence"]
 
 
 def _decision_to_confidence(decision: float, model) -> float:
